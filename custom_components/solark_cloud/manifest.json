@@ -1,0 +1,18 @@
+{
+  "domain": "solark_cloud",
+  "name": "Sol-Ark Cloud",
+  "codeowners": [
+    "@zorkian"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://www.home-assistant.io/integrations/solark_cloud",
+  "homekit": {},
+  "iot_class": "cloud_polling",
+  "requirements": [
+    "solark_cloud==0.0.2"
+  ],
+  "ssdp": [],
+  "zeroconf": [],
+  "version": "0.0.1"
+}
