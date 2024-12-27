@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import logging
+import time
 import typing
 
 from homeassistant.components.sensor import (
@@ -26,7 +27,9 @@ _LOGGER = logging.getLogger(__name__)
 class SolArkCloudSensorEntityDescription(SensorEntityDescription):
     """Sensor entity description for SolarEdge."""
 
-    invert_key: str | None = None
+    only_if_key: str | None = None
+    source_key: str | None = None
+    accum_key: str | None = None
 
     # min_power: int = 0
     # pv_to: bool = False
@@ -54,11 +57,36 @@ SENSOR_TYPES = [
         native_unit_of_measurement="%",
     ),
     SolArkCloudSensorEntityDescription(
-        key="battery_power",
-        invert_key="battery_to",
+        key="battery_power_drain",
+        source_key="battery_power",
+        only_if_key="battery_to",
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.POWER,
         native_unit_of_measurement="W",
+    ),
+    SolArkCloudSensorEntityDescription(
+        key="battery_power_drain_accum",
+        accum_key="battery_power",
+        only_if_key="battery_to",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement="Wh",
+    ),
+    SolArkCloudSensorEntityDescription(
+        key="battery_power_charge",
+        source_key="battery_power",
+        only_if_key="to_battery",
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement="W",
+    ),
+    SolArkCloudSensorEntityDescription(
+        key="battery_power_charge_accum",
+        accum_key="battery_power",
+        only_if_key="to_battery",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement="Wh",
     ),
     SolArkCloudSensorEntityDescription(
         key="grid_or_meter_power",
@@ -67,10 +95,24 @@ SENSOR_TYPES = [
         native_unit_of_measurement="W",
     ),
     SolArkCloudSensorEntityDescription(
+        key="grid_or_meter_power_accum",
+        accum_key="grid_or_meter_power",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement="Wh",
+    ),
+    SolArkCloudSensorEntityDescription(
         key="load_or_eps_power",
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.POWER,
         native_unit_of_measurement="W",
+    ),
+    SolArkCloudSensorEntityDescription(
+        key="load_or_eps_power_accum",
+        accum_key="load_or_eps_power",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement="Wh",
     ),
     SolArkCloudSensorEntityDescription(
         key="pv_power",
@@ -79,12 +121,25 @@ SENSOR_TYPES = [
         native_unit_of_measurement="W",
     ),
     SolArkCloudSensorEntityDescription(
+        key="pv_power_accum",
+        accum_key="pv_power",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement="Wh",
+    ),
+    SolArkCloudSensorEntityDescription(
         key="generator_power",
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.POWER,
         native_unit_of_measurement="W",
     ),
-    # SolArkCloudSensorEntityDescription(key="battery_to", state_class=SensorStateClass.)
+    SolArkCloudSensorEntityDescription(
+        key="generator_power_accum",
+        accum_key="generator_power",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement="Wh",
+    ),
 ]
 
 
@@ -135,12 +190,26 @@ class PlantSensor(CoordinatorEntity, SensorEntity):
         self.plant = plant
         self.flow = flow
         self.sensor = sensor
+        self.accumulated = 0
+        self.last_updated = time.time()
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Update sensor with latest data from coordinator."""
         # This method is called by your DataUpdateCoordinator when a successful update runs.
         self.flow = self.coordinator.data["flows"][self.plant["id"]]
+
+        # Handle accumulation if we're an accumulator. Note, we have all the data for the flows
+        # here (aka, all sensors.)
+        now = time.time()
+        if self.sensor.accum_key and (
+            (not self.sensor.only_if_key) or getattr(self.flow, self.sensor.only_if_key)
+        ):
+            self.accumulated += (getattr(self.flow, self.sensor.accum_key) / 3600) * (
+                now - self.last_updated
+            )
+        self.last_updated = now
+
         self.async_write_ha_state()
 
     @property
@@ -175,9 +244,19 @@ class PlantSensor(CoordinatorEntity, SensorEntity):
         """Return the state of the entity."""
         # Using native value and native unit of measurement, allows you to change units
         # in Lovelace and HA will automatically calculate the correct value.
-        invert = self.sensor.invert_key and getattr(self.flow, self.sensor.invert_key)
-        value = getattr(self.flow, self.sensor.key)
-        return value if not invert else -value
+
+        # If we're an accumulator, return this as our value.
+        if self.sensor.accum_key:
+            return self.accumulated
+
+        # Only emit if this key is true, if it exists.
+        if self.sensor.only_if_key and not getattr(self.flow, self.sensor.only_if_key):
+            return 0
+
+        # If we have a source key, use that, otherwise use the regular key.
+        if self.sensor.source_key:
+            return getattr(self.flow, self.sensor.source_key)
+        return getattr(self.flow, self.sensor.key)
 
     @property
     def native_unit_of_measurement(self) -> str | None:
