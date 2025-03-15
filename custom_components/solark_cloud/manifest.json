@@ -10,9 +10,9 @@
   "homekit": {},
   "iot_class": "cloud_polling",
   "requirements": [
-    "solark_cloud==0.0.2"
+    "solark_cloud==0.0.3"
   ],
   "ssdp": [],
   "zeroconf": [],
-  "version": "0.0.1"
+  "version": "0.0.2"
 }
